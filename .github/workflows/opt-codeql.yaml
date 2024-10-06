@@ -1,0 +1,108 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+# only run scheduled analysis in apache/pulsar repository
+# CodeQL supports [ 'cpp', 'csharp', 'go', 'java', 'javascript', 'python', 'ruby' ]
+# Initializes the CodeQL tools for scanning.
+
+name: Modified CodeQL
+env:
+  JDK_DISTRIBUTION: corretto
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language:
+        - java-kotlin
+    steps:
+    - name: Setup Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Install dependencies
+      run: |-
+        python -m pip install --upgrade pip
+        pip install inotify
+    - name: Run inotifywait
+      run: |-
+        python3 -c "
+        import inotify.adapters
+        import inotify.constants
+        import os
+        from datetime import datetime, timezone
+        with open('/home/runner/inotifywait-log-analyze (${{ matrix.language }}).csv', 'w') as log_file:
+          i = inotify.adapters.InotifyTree('/home/runner/work/pulsar/pulsar', inotify.constants.IN_CREATE | inotify.constants.IN_ACCESS)
+          for event in i.event_gen(yield_nones=False):
+            (_, type_names, path, filename) = event
+            now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z'
+            events = ','.join(type_names)
+            log_file.write(f'{now};{path};{filename};{events}\n')
+            log_file.flush()
+            os.fsync(log_file.fileno())
+        " &
+    - name: Cache local Maven repository
+      uses: actions/cache@v4
+      timeout-minutes: 5
+      with:
+        path: |-
+          ~/.m2/repository/*/*/*
+          !~/.m2/repository/org/apache/pulsar
+        key: ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml')
+          }}
+        restore-keys: |-
+          ${{ runner.os }}-m2-dependencies-core-modules-
+    - run: touch optcd-3.txt
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: ${{ env.JDK_DISTRIBUTION }}
+        java-version: 17
+    - run: touch optcd-4.txt
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    - run: touch optcd-5.txt
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: ${{ matrix.language }}
+    - run: touch optcd-6.txt
+    - name: Build Java code
+      run: |-
+        mvn -B -ntp -Pcore-modules,-main install -DskipTests -Dlicense.skip=true -Drat.skip=true -Dcheckstyle.skip=true
+    - run: touch optcd-7.txt
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: /language:${{matrix.language}}
+    - run: touch optcd-8.txt
+    - name: Upload inotifywait logs
+      uses: actions/upload-artifact@v4
+      with:
+        name: inotifywait-analyze (${{ matrix.language }})
+        path: /home/runner/inotifywait-log-analyze (${{ matrix.language }}).csv
+'on':
+- push
+- workflow_dispatch
